@@ -15,8 +15,8 @@ pymupdf==1.23.8
 openpyxl==3.1.2
 
 # Vector Storage (Simple)
-# sqlite3 - Built-in Python
-# pickle - Built-in Python
+sqlite3  # Built-in Python
+pickle   # Built-in Python
 
 # Template Generation
 docxtpl==0.16.7

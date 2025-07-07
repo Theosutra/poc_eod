@@ -1,0 +1,159 @@
+# Configuration POC EODEN
+# Génération automatique de notes d'investissement
+
+# API Keys (à définir dans .env)
+apis:
+  gemini_api_key: ${GEMINI_API_KEY}
+  pinecone_api_key: ${PINECONE_API_KEY}  # Si utilisation Pinecone
+  elasticsearch_host: ${ELASTICSEARCH_HOST}  # Si utilisation Elasticsearch
+
+# Configuration Google Drive
+google_drive:
+  credentials_file: "config/credentials.json"
+  token_file: "config/token.pickle"
+  
+  # Dossiers cibles dans Google Drive
+  source_folders:
+    - name: "EODEN"
+      recursive: true
+    - name: "Présentation Entreprise"
+      recursive: true
+  
+  # Types de fichiers à traiter
+  supported_extensions: [".pdf", ".docx", ".pptx", ".xlsx"]
+  
+  # Cache local
+  cache_directory: "data/cache"
+  cache_ttl_hours: 24  # Durée de vie du cache
+
+# Configuration Base Vectorielle
+vector_store:
+  # Type: "pinecone" ou "elasticsearch"
+  type: "pinecone"
+  
+  index_name: "eoden-investment-docs"
+  dimension: 768  # Dimension des embeddings Gemini
+  
+  # Configuration Pinecone
+  pinecone:
+    api_key: ${PINECONE_API_KEY}
+    environment: "gcp-starter"  # ou votre environnement
+    metric: "cosine"
+    pod_type: "p1.x1"  # Plus petit pod pour POC
+  
+  # Configuration Elasticsearch (alternative)
+  elasticsearch:
+    hosts: ["localhost:9200"]
+    username: null  # ou ${ELASTICSEARCH_USER}
+    password: null  # ou ${ELASTICSEARCH_PASSWORD}
+    verify_certs: false
+
+# Configuration Embeddings
+embeddings:
+  model: "models/embedding-001"  # Gemini
+  cache_directory: "data/embeddings"
+  batch_size: 100
+  rate_limit_delay: 0.1  # secondes entre requêtes
+  
+  # Paramètres de chunking
+  chunking:
+    default_chunk_size: 1400
+    overlap_tokens: 200
+    min_chunk_size: 100
+    max_chunk_size: 2000
+
+# Configuration Génération LLM
+generation:
+  model: "gemini-pro"
+  temperature: 0.2
+  max_output_tokens: 4000
+  
+  # Prompts par section
+  prompts_file: "templates/prompts.yaml"
+
+# Configuration Template
+templates:
+  input_template: "templates/note_template.docx"
+  output_directory: "data/output"
+  
+  # Sections de la note d'investissement
+  sections:
+    - id: "resume_executif"
+      title: "Résumé Exécutif"
+      required: true
+      max_tokens: 500
+    
+    - id: "presentation_entreprise"
+      title: "Présentation de l'Entreprise"
+      required: true
+      max_tokens: 800
+    
+    - id: "analyse_marche"
+      title: "Analyse du Marché"
+      required: true
+      max_tokens: 1000
+    
+    - id: "analyse_financiere"
+      title: "Analyse Financière"
+      required: true
+      max_tokens: 1200
+    
+    - id: "equipe_management"
+      title: "Équipe et Management"
+      required: true
+      max_tokens: 600
+    
+    - id: "risques_opportunites"
+      title: "Risques et Opportunités"
+      required: true
+      max_tokens: 800
+    
+    - id: "valorisation"
+      title: "Valorisation et Investissement"
+      required: false
+      max_tokens: 1000
+    
+    - id: "conclusion"
+      title: "Conclusion et Recommandations"
+      required: true
+      max_tokens: 400
+
+# Configuration Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/poc.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Configuration Recherche
+search:
+  top_k_chunks: 15  # Nombre de chunks à récupérer par section
+  similarity_threshold: 0.7  # Seuil de similarité minimum
+  
+  # Filtres de recherche
+  filters:
+    by_document_type: true
+    by_business_context: true
+    by_themes: true
+  
+  # Pondération des scores
+  scoring_weights:
+    semantic_similarity: 0.5
+    metadata_relevance: 0.3
+    chunk_quality: 0.2
+
+# Configuration Performance
+performance:
+  max_concurrent_requests: 5
+  timeout_seconds: 30
+  retry_attempts: 3
+  
+  # Limites
+  max_documents_per_batch: 50
+  max_chunks_per_document: 100
+
+# Configuration Debug/Dev
+debug:
+  save_intermediate_results: true
+  log_embeddings: false
+  verbose_chunking: true
+  save_raw_responses: false
