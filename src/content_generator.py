@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 # Imports locaux
 from vector_store import VectorManager
-from embedding_manager import EmbeddingManager
+from simplified_embedding_manager import SimplifiedEmbeddingManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +32,14 @@ class ContentGenerator:
         load_dotenv()
         
         # Initialiser les composants
-        self.embedding_manager = EmbeddingManager(
+        self.embedding_manager = SimplifiedEmbeddingManager(
             api_key=os.getenv("GEMINI_API_KEY")
         )
         self.vector_manager = VectorManager(config_path)
         
         # Modèle de génération
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.generation_model = genai.GenerativeModel('gemini-1.5-flash')
+        self.generation_model = genai.GenerativeModel('gemini-2.5-flash')
         
         logger.info("✅ Content Generator initialisé")
     

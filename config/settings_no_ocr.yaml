@@ -1,0 +1,83 @@
+# Configuration POC EODEN - VERSION RAPIDE SANS OCR
+# Pour tests de vectorisation rapide
+
+# API Keys (à définir dans .env)
+apis:
+  gemini_api_key: ${GEMINI_API_KEY}
+  pinecone_api_key: ${PINECONE_API_KEY}
+  elasticsearch_host: ${ELASTICSEARCH_HOST}
+
+# Configuration Google Drive
+google_drive:
+  credentials_file: "config/credentials.json"
+  token_file: "config/token.pickle"
+  
+  source_folders:
+    - name: "EODEN"
+      recursive: true
+    - name: "Présentation Entreprise"  
+      recursive: true
+  
+  supported_extensions: [".pdf", ".docx", ".pptx", ".xlsx"]
+  cache_directory: "data/cache"
+  cache_ttl_hours: 24
+
+# Configuration Base Vectorielle
+vector_store:
+  type: "pinecone"
+  index_name: "eoden-investment-docs"
+  dimension: 768
+  
+  pinecone:
+    api_key: ${PINECONE_API_KEY}
+    environment: "gcp-starter"
+    metric: "cosine"
+    pod_type: "p1.x1"
+
+# Configuration Embeddings
+embeddings:
+  model: "models/embedding-001"
+  cache_directory: "data/embeddings"
+  batch_size: 100
+  rate_limit_delay: 0.05  # Plus rapide
+  
+  chunking:
+    default_chunk_size: 1400
+    overlap_tokens: 200
+    min_chunk_size: 100
+    max_chunk_size: 2000
+
+# Configuration Génération LLM
+generation:
+  model: "gemini-2.5-flash"
+  temperature: 0.2
+  max_output_tokens: 8000
+
+# Configuration OCR - DÉSACTIVÉ POUR VITESSE
+ocr:
+  enabled: false  # 🚀 DÉSACTIVÉ pour tests rapides
+  
+  # Configuration pour réactivation future
+  preferred_engine: "gemini_vision"
+  min_text_threshold: 100
+  
+  gemini_vision:
+    model: "gemini-2.5-flash"
+    max_images_per_page: 15
+    temperature: 0.1
+
+# Configuration Performance - OPTIMISÉE
+performance:
+  max_concurrent_requests: 10  # Plus de parallélisme
+  timeout_seconds: 15  # Plus rapide
+  retry_attempts: 2  # Moins de retry
+  
+  max_documents_per_batch: 100  # Plus de documents
+  max_chunks_per_document: 50
+
+# Configuration Debug
+debug:
+  save_intermediate_results: false  # Plus rapide
+  log_embeddings: false
+  verbose_chunking: true
+  save_raw_responses: false

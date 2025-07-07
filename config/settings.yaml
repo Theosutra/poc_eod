@@ -64,9 +64,9 @@ embeddings:
 
 # Configuration Génération LLM
 generation:
-  model: "gemini-pro"
+  model: "gemini-2.5-flash"  # Modèle plus puissant et économique
   temperature: 0.2
-  max_output_tokens: 4000
+  max_output_tokens: 8000  # Gemini 2.5 supporte plus de tokens
   
   # Prompts par section
   prompts_file: "templates/prompts.yaml"
@@ -151,9 +151,45 @@ performance:
   max_documents_per_batch: 50
   max_chunks_per_document: 100
 
+# Configuration OCR
+ocr:
+  enabled: false  # 🚫 DÉSACTIVÉ pour tests rapides (réactiver si besoin)
+  
+  # Types de fichiers supportés pour OCR
+  supported_types: [".pdf", ".pptx"]
+  
+  # Seuil de texte minimum pour déclencher OCR (en caractères)
+  min_text_threshold: 100
+  
+  # Moteur OCR préféré
+  preferred_engine: "gemini_vision"  # "gemini_vision", "tesseract" ou "google_vision"
+  
+  # Configuration Gemini Vision (intelligent, même API)
+  gemini_vision:
+    model: "gemini-2.5-flash"  # Modèle Gemini 2.5 - plus puissant et moins cher
+    max_images_per_page: 15  # Plus d'images supportées
+    temperature: 0.1  # Précision maximale pour OCR
+  
+  # Configuration Tesseract (gratuit, fallback)
+  tesseract:
+    languages: ["fra", "eng"]  # Langues supportées
+    config: "--psm 6"  # Mode de segmentation
+  
+  # Configuration Google Vision API (payant, plus précis)
+  google_vision:
+    credentials_file: "config/google-vision-credentials.json"
+    max_images_per_page: 10
+  
+  # Filtres de qualité
+  quality:
+    min_confidence: 0.5  # Confiance minimum pour garder le texte OCR
+    max_image_size_mb: 10  # Taille max des images à traiter
+    skip_small_images: true  # Ignorer les petites images (<50px)
+
 # Configuration Debug/Dev
 debug:
   save_intermediate_results: true
   log_embeddings: false
   verbose_chunking: true
   save_raw_responses: false
+  save_ocr_results: true  # Sauvegarder les résultats OCR pour debug

@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 # Imports locaux
 from drive_connector import DriveConnector
-from embedding_manager import EmbeddingManager, ProcessedChunk
+from simplified_embedding_manager import SimplifiedEmbeddingManager, SimplifiedChunk
 from vector_store import VectorManager, VectorDocument
 
 # Configuration du logging
@@ -98,13 +98,13 @@ class RAGPipeline:
                 cache_dir=self.config['google_drive']['cache_directory']
             )
             
-            # Embedding Manager
-            logger.info("🧠 Initialisation Embedding Manager...")
+            # Simplified Embedding Manager
+            logger.info("🧠 Initialisation Simplified Embedding Manager...")
             gemini_api_key = self.config['apis']['gemini_api_key']
             if not gemini_api_key:
                 raise ValueError("GEMINI_API_KEY manquant dans .env")
             
-            self.embedding_manager = EmbeddingManager(
+            self.embedding_manager = SimplifiedEmbeddingManager(
                 api_key=gemini_api_key,
                 cache_dir=self.config['embeddings']['cache_directory']
             )
@@ -210,7 +210,7 @@ class RAGPipeline:
             return ""
     
     def _extract_pdf_content(self, file_path: Path) -> str:
-        """Extraire le contenu d'un PDF"""
+        """Extraire le contenu d'un PDF avec OCR des images"""
         import pymupdf  # fitz
         
         text = ""
@@ -219,7 +219,20 @@ class RAGPipeline:
         for page_num in range(doc.page_count):
             page = doc[page_num]
             text += f"\n--- Page {page_num + 1} ---\n"
-            text += page.get_text()
+            
+            # Extraire le texte normal
+            page_text = page.get_text()
+            text += page_text
+            
+            # Si peu de texte, essayer l'OCR sur les images
+            if len(page_text.strip()) < 100:
+                try:
+                    ocr_text = self._extract_images_with_ocr(page)
+                    if ocr_text:
+                        text += f"\n[OCR] {ocr_text}"
+                        logger.info(f"OCR appliqué sur page {page_num + 1}")
+                except Exception as e:
+                    logger.warning(f"Erreur OCR page {page_num + 1}: {e}")
         
         doc.close()
         return text.strip()
@@ -243,7 +256,7 @@ class RAGPipeline:
         return text.strip()
     
     def _extract_pptx_content(self, file_path: Path) -> str:
-        """Extraire le contenu d'un PowerPoint"""
+        """Extraire le contenu d'un PowerPoint avec OCR des images"""
         from pptx import Presentation
         
         prs = Presentation(str(file_path))
@@ -252,9 +265,22 @@ class RAGPipeline:
         for slide_num, slide in enumerate(prs.slides, 1):
             text += f"\n--- Slide {slide_num} ---\n"
             
+            slide_text = ""
             for shape in slide.shapes:
                 if hasattr(shape, "text"):
-                    text += shape.text + "\n"
+                    slide_text += shape.text + "\n"
+            
+            text += slide_text
+            
+            # Si peu de texte sur la slide, essayer l'OCR sur les images
+            if len(slide_text.strip()) < 50:
+                try:
+                    ocr_text = self._extract_slide_images_with_ocr(slide)
+                    if ocr_text:
+                        text += f"\n[OCR] {ocr_text}"
+                        logger.info(f"OCR appliqué sur slide {slide_num}")
+                except Exception as e:
+                    logger.warning(f"Erreur OCR slide {slide_num}: {e}")
         
         return text.strip()
     
@@ -284,7 +310,289 @@ class RAGPipeline:
         
         return text.strip()
     
-    def process_embeddings(self, file_contents: Dict[str, str]) -> List[ProcessedChunk]:
+    def _extract_images_with_ocr(self, page) -> str:
+        """Extraire le texte des images d'une page PDF avec OCR"""
+        try:
+            # Méthode 1: Gemini Vision (intelligent, même API)
+            return self._ocr_with_gemini_vision(page)
+        except Exception as e:
+            logger.warning(f"Gemini Vision OCR failed: {e}")
+            try:
+                # Méthode 2: Tesseract (fallback gratuit)
+                return self._ocr_with_tesseract(page)
+            except Exception as e2:
+                logger.warning(f"Tesseract OCR failed: {e2}")
+                try:
+                    # Méthode 3: Google Vision API (fallback précis)
+                    return self._ocr_with_google_vision(page)
+                except Exception as e3:
+                    logger.warning(f"Google Vision OCR failed: {e3}")
+                    return ""
+    
+    def _ocr_with_gemini_vision(self, page) -> str:
+        """OCR avec Gemini Vision (intelligent et contextuel)"""
+        try:
+            import google.generativeai as genai
+            import base64
+            import io
+            
+            # Extraire les images de la page
+            image_list = page.get_images(full=True)
+            ocr_texts = []
+            
+            for img_index, img in enumerate(image_list):
+                try:
+                    # Récupérer l'image
+                    xref = img[0]
+                    base_image = page.parent.extract_image(xref)
+                    image_bytes = base_image["image"]
+                    
+                    # Encoder en base64 pour Gemini
+                    image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+                    
+                    # Prompt optimisé pour Gemini 2.0 Flash
+                    prompt = """
+                    Vous êtes un expert en analyse de documents d'investissement. Analysez cette image avec une précision maximale.
+                    
+                    MISSIONS:
+                    1. OCR complet: Extraire TOUT le texte visible avec une précision parfaite
+                    2. Analyse financière: Identifier toutes les métriques, ratios, évolutions
+                    3. Structuration intelligente: Organiser les données pour faciliter l'analyse
+                    4. Insights business: Dégager les tendances et signaux clés
+                    
+                    FORMAT DE SORTIE:
+                    
+                    TEXTE EXTRAIT:
+                    [Transcription exacte de tout le texte visible]
+                    
+                    MÉTRIQUES FINANCIÈRES:
+                    [Lister tous les chiffres avec unités: CA, EBITDA, croissance, ratios, etc.]
+                    
+                    DONNÉES TEMPORELLES:
+                    [Évolutions, comparaisons annuelles, tendances identifiées]
+                    
+                    INSIGHTS CLÉS:
+                    [Points saillants pour un investisseur: performance, risques, opportunités]
+                    
+                    TYPE DE CONTENU:
+                    [Graphique/Tableau/Diagramme/Schéma + description technique]
+                    
+                    Soyez exhaustif et précis. Gemini 2.5 Excellence attendue.
+                    """
+                    
+                    # Créer le modèle Gemini Vision 2.5
+                    model = genai.GenerativeModel('gemini-2.5-flash')
+                    
+                    # Analyser l'image
+                    response = model.generate_content([
+                        prompt,
+                        {
+                            "mime_type": f"image/{base_image.get('ext', 'png')}",
+                            "data": image_b64
+                        }
+                    ])
+                    
+                    if response.text and response.text.strip():
+                        analyzed_content = response.text.strip()
+                        ocr_texts.append(f"[Image {img_index + 1} - Gemini Analysis]\n{analyzed_content}")
+                        logger.info(f"Gemini Vision OCR réussi pour image {img_index + 1}")
+                        
+                except Exception as e:
+                    logger.warning(f"Erreur Gemini Vision image {img_index}: {e}")
+                    continue
+            
+            return "\n\n".join(ocr_texts)
+            
+        except Exception as e:
+            logger.warning(f"Gemini Vision OCR non disponible: {e}")
+            raise e
+    
+    def _ocr_with_tesseract(self, page) -> str:
+        """OCR avec Tesseract (gratuit)"""
+        try:
+            import pytesseract
+            from PIL import Image
+            import io
+            
+            # Extraire les images de la page
+            image_list = page.get_images(full=True)
+            ocr_texts = []
+            
+            for img_index, img in enumerate(image_list):
+                try:
+                    # Récupérer l'image
+                    xref = img[0]
+                    base_image = page.parent.extract_image(xref)
+                    image_bytes = base_image["image"]
+                    
+                    # Convertir en PIL Image
+                    image = Image.open(io.BytesIO(image_bytes))
+                    
+                    # OCR avec Tesseract
+                    text = pytesseract.image_to_string(image, lang='fra+eng')
+                    
+                    if text.strip():
+                        ocr_texts.append(f"[Image {img_index + 1}] {text.strip()}")
+                        
+                except Exception as e:
+                    logger.warning(f"Erreur OCR image {img_index}: {e}")
+                    continue
+            
+            return "\n".join(ocr_texts)
+            
+        except ImportError:
+            logger.warning("pytesseract non installé. Installer avec: pip install pytesseract")
+            return ""
+    
+    def _ocr_with_google_vision(self, page) -> str:
+        """OCR avec Google Vision API (plus précis mais payant)"""
+        try:
+            from google.cloud import vision
+            import io
+            
+            client = vision.ImageAnnotatorClient()
+            image_list = page.get_images(full=True)
+            ocr_texts = []
+            
+            for img_index, img in enumerate(image_list):
+                try:
+                    # Récupérer l'image
+                    xref = img[0]
+                    base_image = page.parent.extract_image(xref)
+                    image_bytes = base_image["image"]
+                    
+                    # Analyser avec Google Vision
+                    image = vision.Image(content=image_bytes)
+                    response = client.text_detection(image=image)
+                    
+                    if response.text_annotations:
+                        text = response.text_annotations[0].description
+                        ocr_texts.append(f"[Image {img_index + 1}] {text.strip()}")
+                        
+                except Exception as e:
+                    logger.warning(f"Erreur Google Vision image {img_index}: {e}")
+                    continue
+            
+            return "\n".join(ocr_texts)
+            
+        except ImportError:
+            logger.warning("Google Cloud Vision non installé. Installer avec: pip install google-cloud-vision")
+            return ""
+    
+    def _extract_slide_images_with_ocr(self, slide) -> str:
+        """Extraire le texte des images d'une slide PowerPoint avec Gemini Vision"""
+        try:
+            import google.generativeai as genai
+            import base64
+            import io
+            from PIL import Image
+            
+            ocr_texts = []
+            
+            # Parcourir les formes de la slide
+            for shape_index, shape in enumerate(slide.shapes):
+                # Vérifier si c'est une image
+                if hasattr(shape, 'image'):
+                    try:
+                        # Méthode 1: Gemini Vision
+                        try:
+                            # Extraire l'image
+                            image_bytes = shape.image.blob
+                            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+                            
+                            # Prompt optimisé pour slides avec Gemini 2.0
+                            prompt = """
+                            Analysez cette image de slide de présentation business avec la puissance de Gemini 2.0.
+                            
+                            EXTRACTION COMPLÈTE:
+                            1. OCR exhaustif de tout le texte (titres, sous-titres, légendes, annotations)
+                            2. Données quantitatives: chiffres, pourcentages, ratios, dates
+                            3. Éléments visuels: graphiques, schémas, flèches, codes couleur
+                            4. Message stratégique: objectif de la slide pour l'audience
+                            
+                            STRUCTURE DE RÉPONSE:
+                            
+                            CONTENU TEXTUEL:
+                            [Transcription complète et structurée]
+                            
+                            DONNÉES BUSINESS:
+                            [Métriques, KPIs, projections, comparatifs]
+                            
+                            ÉLÉMENTS VISUELS:
+                            [Description des graphiques, schémas, diagrammes]
+                            
+                            MESSAGE STRATÉGIQUE:
+                            [Objectif de communication, points clés pour investisseurs]
+                            
+                            CONTEXTE SLIDE:
+                            [Position probable dans la présentation, audience cible]
+                            
+                            Exploitez pleinement Gemini 2.5 pour une analyse approfondie.
+                            """
+                            
+                            model = genai.GenerativeModel('gemini-2.5-flash')
+                            response = model.generate_content([
+                                prompt,
+                                {
+                                    "mime_type": "image/png",
+                                    "data": image_b64
+                                }
+                            ])
+                            
+                            if response.text and response.text.strip():
+                                analyzed_content = response.text.strip()
+                                ocr_texts.append(f"[Slide Image {shape_index + 1} - Gemini]\n{analyzed_content}")
+                                logger.info(f"Gemini Vision OCR réussi pour slide image {shape_index + 1}")
+                                continue
+                                
+                        except Exception as e:
+                            logger.warning(f"Gemini Vision slide failed: {e}")
+                        
+                        # Méthode 2: Fallback Tesseract
+                        try:
+                            import pytesseract
+                            image = Image.open(io.BytesIO(image_bytes))
+                            text = pytesseract.image_to_string(image, lang='fra+eng')
+                            
+                            if text.strip():
+                                ocr_texts.append(f"[Slide Image {shape_index + 1}] {text.strip()}")
+                                
+                        except Exception as e2:
+                            logger.warning(f"Tesseract slide OCR failed: {e2}")
+                            continue
+                            
+                    except Exception as e:
+                        logger.warning(f"Erreur OCR image slide {shape_index}: {e}")
+                        continue
+            
+            return "\n\n".join(ocr_texts)
+            
+        except Exception as e:
+            logger.warning(f"Erreur générale OCR slides: {e}")
+            return ""
+    
+    def _should_apply_ocr(self, content: str, file_path: str) -> bool:
+        """Déterminer si l'OCR doit être appliqué"""
+        # Configuration OCR
+        ocr_config = self.config.get('ocr', {})
+        
+        # OCR désactivé globalement
+        if not ocr_config.get('enabled', False):
+            return False
+        
+        # Types de fichiers supportés
+        supported_types = ocr_config.get('supported_types', ['.pdf', '.pptx'])
+        file_ext = os.path.splitext(file_path.lower())[1]
+        
+        if file_ext not in supported_types:
+            return False
+        
+        # Seuil de texte minimum pour déclencher OCR
+        min_text_threshold = ocr_config.get('min_text_threshold', 100)
+        
+        return len(content.strip()) < min_text_threshold
+    
+    def process_embeddings(self, file_contents: Dict[str, str]) -> List[SimplifiedChunk]:
         """Traiter les documents : chunking + embeddings"""
         logger.info("🧠 Traitement des embeddings...")
         
@@ -292,9 +600,13 @@ class RAGPipeline:
         processed_chunks = self.embedding_manager.batch_process_documents(file_contents)
         
         logger.info(f"✅ {len(processed_chunks)} chunks traités")
+        
+        # Afficher les métriques de performance
+        self.embedding_manager.print_metrics()
+        
         return processed_chunks
     
-    def store_in_vector_db(self, processed_chunks: List[ProcessedChunk]) -> bool:
+    def store_in_vector_db(self, processed_chunks: List[SimplifiedChunk]) -> bool:
         """Stocker les chunks dans la base vectorielle"""
         logger.info("📦 Stockage dans la base vectorielle...")
         
@@ -303,19 +615,21 @@ class RAGPipeline:
         for chunk in processed_chunks:
             vector_doc = VectorDocument(
                 id=chunk.id,
-                content=chunk.content,
+                content=chunk.metadata.contenu_chunk,  # Utiliser le contenu original
                 embedding=chunk.embedding,
                 metadata={
-                    "source_file": chunk.metadata.source_file,
-                    "document_type": chunk.metadata.document_type.value,
-                    "section_title": chunk.metadata.section_title,
-                    "business_context": chunk.metadata.business_context,
-                    "themes": chunk.metadata.themes,
-                    "confidence_score": chunk.metadata.confidence_score,
+                    "source_file": chunk.metadata.nom_document,
+                    "document_type": "simplified",  # Type simplifié
+                    "section_title": chunk.enriched_content.theme_principal,
+                    "business_context": chunk.enriched_content.commentaire_guidage,
+                    "themes": [chunk.enriched_content.theme_principal],
+                    "confidence_score": 1.0,  # Score par défaut
                     "chunk_index": chunk.metadata.chunk_index,
-                    "token_count": chunk.token_count,
-                    "file_hash": chunk.metadata.file_hash,
-                    "created_at": chunk.metadata.created_at
+                    "token_count": chunk.metadata.taille_chunk,
+                    "file_hash": chunk.id.split("_")[0],  # Extraire du ID
+                    "created_at": chunk.metadata.date_creation,
+                    "dossier_racine": chunk.metadata.dossier_racine,
+                    "contenu_enrichi": chunk.enriched_content.contenu_enrichi
                 }
             )
             vector_docs.append(vector_doc)
@@ -406,9 +720,13 @@ class RAGPipeline:
     
     def get_stats(self) -> Dict[str, Any]:
         """Obtenir les statistiques du pipeline"""
+        metrics = self.embedding_manager.get_metrics()
         return {
             "cache_files": len(list(Path(self.config['google_drive']['cache_directory']).glob("*"))),
-            "embedding_cache_size": len(self.embedding_manager.embedding_cache),
+            "embedding_cache_size": metrics["cache_sizes"]["embedding_cache"],
+            "enrichment_cache_size": metrics["cache_sizes"]["enrichment_cache"],
+            "embeddings_generated": metrics["embeddings_generated"],
+            "enrichments_generated": metrics["enrichments_generated"],
             "vector_store_type": self.config['vector_store']['type'],
             "index_name": self.config['vector_store']['index_name']
         }
